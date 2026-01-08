@@ -16,24 +16,46 @@ CORS(app)
 
 # Load your trained model and scaler
 try:
-    model = joblib.load("svm_model.pkl")
-    scaler = joblib.load("scaler.pkl")
-    print("✅ Model and scaler loaded successfully!")
-except Exception as e:
-    print(f"❌ Failed to load model: {e}")
+    model = joblib.load("svm_model.pkl")      # Your current training output
+    scaler = joblib.load("scaler.pkl")        # Your current training output
+    print("✅ Model & scaler loaded successfully!")
+except:
+    print("❌ Model files missing!")
     exit(1)
 
-def extract_mfcc_features(y, sr, n_mfcc=13, n_fft=2048, hop_length=512):
-    """
-    EXACTLY matches your main.py training feature extraction
-    Returns 13 mean MFCC coefficients
-    """
+# def extract_mfcc_features(y, sr, n_mfcc=13, n_fft=2048, hop_length=512):
+#     """
+#     EXACTLY matches your main.py training feature extraction
+#     Returns 13 mean MFCC coefficients
+#     """
+#     try:
+#         mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc, n_fft=n_fft, hop_length=hop_length)
+#         return np.mean(mfccs.T, axis=0)  # Shape: (13,)
+#     except Exception as e:
+#         print(f"MFCC extraction error: {e}")
+#         return None
+
+
+def extract_advanced_features(audio_bytes):
+    """🎯 SAME 48+ features for prediction"""
     try:
-        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc, n_fft=n_fft, hop_length=hop_length)
-        return np.mean(mfccs.T, axis=0)  # Shape: (13,)
-    except Exception as e:
-        print(f"MFCC extraction error: {e}")
+        audio_data, sr = librosa.load(io.BytesIO(audio_bytes), sr=None)
+        
+        mfcc = np.mean(librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13), axis=1)
+        delta_mfcc = np.mean(librosa.feature.delta(mfcc), axis=1)
+        spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=audio_data, sr=sr))
+        spectral_rolloff = np.mean(librosa.feature.spectral_rolloff(y=audio_data, sr=sr))
+        zcr = np.mean(librosa.feature.zero_crossing_rate(audio_data))
+        chroma = np.mean(librosa.feature.chroma(y=audio_data, sr=sr), axis=1)
+        contrast = np.mean(librosa.feature.spectral_contrast(y=audio_data, sr=sr), axis=1)
+        
+        features = np.concatenate([mfcc, delta_mfcc, 
+                                 [spectral_centroid, spectral_rolloff, zcr],
+                                 chroma, contrast])
+        return features
+    except:
         return None
+
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -74,7 +96,7 @@ def predict():
             print(f"   Resampled to {sr}Hz for consistent MFCC")
 
         # Extract exactly 13 MFCC features
-        features = extract_mfcc_features(samples, sr)
+        features = extract_advanced_features(audio_bytes)
         if features is None or len(features) != 13:
             return jsonify({"error": "Failed to extract MFCC features"}), 500
 
