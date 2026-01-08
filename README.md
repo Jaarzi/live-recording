@@ -85,3 +85,10 @@ To classify an audio file as genuine or deepfake, follow these steps:
 ## Contribution & License
 - For contributing, fork this project and compare and submit a pull request with proper description to your changed/added features
 - OpenSource MIT License, for more information read the [License](./LICENSE).
+
+
+
+Running  backend terminal one
+
+ pip install flask flask-cors 
+  .\venv\Scripts\Activate.ps1
