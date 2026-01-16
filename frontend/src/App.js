@@ -140,9 +140,14 @@ function App() {
         body: formData
       });
       
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       const data = await response.json();
       setResult(data);
     } catch (error) {
+      console.error('🚨 Fetch error:', error);
       setResult({ error: 'Backend failed. Run: python app.py' });
     } finally {
       setLoading(false);
@@ -193,7 +198,9 @@ function App() {
             ) : (
               <div className={`success ${result.prediction.toLowerCase()}`}>
                 <h2>{result.prediction}</h2>
-                <p>Confidence: <strong>{(result.confidence * 100).toFixed(1)}%</strong></p>
+                {/* ✅ CONFIDENCE FIXED: Direct display (50-100%) */}
+                <p>Confidence: <strong>{result.confidence?.toFixed(1)}% </strong></p>
+                <p><small>Raw: {result.raw_prediction?.toFixed(4)}</small></p>
               </div>
             )}
           </div>

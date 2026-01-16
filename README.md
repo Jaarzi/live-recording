@@ -92,3 +92,24 @@ Running  backend terminal one
 
  pip install flask flask-cors 
   .\venv\Scripts\Activate.ps1
+
+
+
+
+
+  cd C:\Users\User\live-recording
+
+# 1. CREATE new virtual environment
+python -m venv venv
+
+# 2. Activate (CMD way - works always)
+venv\Scripts\activate.bat
+
+# 3. Upgrade pip
+python -m pip install --upgrade pip
+
+# 4. Install ALL dependencies
+pip install flask flask-cors torch torchaudio librosa numpy
+
+# 5. Run app
+python app.py

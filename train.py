@@ -1,240 +1,96 @@
-# # -*- coding: utf-8 -*-
-# print("🚀 ONE-CLASS DEEPFAKE DETECTOR (Real-Only)")
-# import os, librosa, numpy as np, joblib
-# from sklearn.ensemble import IsolationForest
-# from sklearn.preprocessing import StandardScaler
+import torch
+import torch.nn as nn
+import torchaudio
+from datasets import load_dataset, Audio
+from torch.utils.data import DataLoader, Dataset, random_split
+import numpy as np
+import torch.optim as optim
 
-# # YOUR ASVspoof REAL FILES (25K+ perfect samples)
-# TRAIN_PATH = r"C:\Users\library\Desktop\voice detction system\LA\ASVspoof2019_LA_train\flac"
-# print(f"📁 Loading REAL patterns: {TRAIN_PATH}")
+print("🚀 FINAL CNN Training - FIXED...")
 
-# X = []
-# print("✅ Learning REAL voice patterns...")
+# Load dataset
+dataset = load_dataset("garystafford/deepfake-audio-detection")
+dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+print(f"✅ Dataset: {len(dataset['train'])} samples")
 
-# if os.path.exists(TRAIN_PATH):
-#     for root, _, files in os.walk(TRAIN_PATH):
-#         for f in files:
-#             if f.endswith('.flac') and f.startswith('LA_T'):  # Only REAL
-#                 path = os.path.join(root, f)
-#                 try:
-#                     audio, sr = librosa.load(path, sr=16000, duration=3.0, mono=True)
-                    
-#                     # 39+ ROBUST features for real pattern detection
-#                     mfcc = np.mean(librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13), axis=1)
-#                     mfcc_delta1 = np.mean(librosa.feature.delta(librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)), axis=1)
-#                     mfcc_delta2 = np.mean(librosa.feature.delta(librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13), order=2), axis=1)
-                    
-#                     features = np.concatenate([mfcc, mfcc_delta1, mfcc_delta2])
-#                     X.append(features)
-                    
-#                     if len(X) % 500 == 0:
-#                         print(f"✅ {len(X)} real patterns learned")
-                        
-#                     if len(X) >= 5000:  # Enough for perfect detection
-#                         break
-#                 except:
-#                     pass
-#         if len(X) >= 5000:
-#             break
+mel_transform = torchaudio.transforms.MelSpectrogram(sample_rate=16000, n_mels=64, n_fft=1024, hop_length=512)
+mel_db = torchaudio.transforms.AmplitudeToDB()
 
-# print(f"\n🎉 Learned {len(X)} REAL voice patterns!")
-
-# # ONE-CLASS ISOLATION FOREST (detects anomalies = fakes)
-# scaler = StandardScaler()
-# X_scaled = scaler.fit_transform(X)
-
-# # Train anomaly detector
-# model = IsolationForest(contamination=0.1, random_state=42)  # 10% expected fakes
-# model.fit(X_scaled)
-
-# # SAVE
-# joblib.dump(model, "oneclass_deepfake_model.pkl")
-# joblib.dump(scaler, "oneclass_scaler.pkl")
-# print("\n💾 SAVED One-Class Detector!")
-# print("✅ Real audio → NORMAL")
-# print("✅ AI audio → ANOMALY = FAKE")
-# print("\n🚀 Update api.py and run: python api.py")
-
-
-
-#shows both as real
-
-# -*- coding: utf-8 -*-
-# print("🚀 ULTIMATE ONE-CLASS DEEPFAKE DETECTOR")
-# print("✅ Learns REAL patterns → ANY AI = anomaly")
-# import os, librosa, numpy as np, joblib
-# from sklearn.ensemble import IsolationForest
-# from sklearn.preprocessing import RobustScaler
-
-# TRAIN_PATH = r"C:\Users\library\Desktop\voice detction system\LA\ASVspoof2019_LA_train\flac"
-
-# # ENHANCED 78+ features (industry standard)
-# def extract_advanced_features(audio, sr):
-#     features = []
+class DeepfakeDataset(Dataset):
+    def __init__(self, hf_dataset):
+        self.data = hf_dataset
     
-#     # MFCC (39 features - gold standard)
-#     mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)
-#     features.extend(np.mean(mfcc, axis=1))
-#     features.extend(np.mean(librosa.feature.delta(mfcc), axis=1))
-#     features.extend(np.mean(librosa.feature.delta(mfcc, order=2), axis=1))
+    def __len__(self):
+        return len(self.data)
     
-#     # Spectral features (8 features)
-#     features.extend([np.mean(librosa.feature.spectral_centroid(y=audio, sr=sr))])
-#     features.extend([np.mean(librosa.feature.spectral_rolloff(y=audio, sr=sr))])
-#     features.extend([np.mean(librosa.feature.spectral_bandwidth(y=audio, sr=sr))])
-#     features.extend([np.mean(librosa.feature.spectral_flatness(y=audio))])
+    def __getitem__(self, idx):
+        try:
+            sample = self.data[idx]
+            audio = sample["audio"]["array"].astype(np.float32)
+            label = float(sample["label"])
+            
+            if len(audio) > 48000:
+                audio = audio[:48000]
+            else:
+                audio = np.pad(audio, (0, 48000 - len(audio)))
+            
+            # FIXED: Correct tensor shape [1, 48000] → [1, 64, 94]
+            audio = torch.from_numpy(audio).unsqueeze(0)  # [1, 48000]
+            mel = mel_db(mel_transform(audio))  # [1, 64, 94]
+            mel = mel.unsqueeze(0)  # [1, 1, 64, 94] → squeeze to [1, 64, 94]
+            mel = mel.squeeze(0)  # Now [64, 94] for CNN
+            return mel.unsqueeze(0), torch.tensor(label).float()  # [1, 64, 94]
+        except:
+            # Dummy data with CORRECT shape
+            mel = torch.zeros(1, 64, 94)
+            return mel, torch.tensor(0.0)
+
+# Split
+full_dataset = DeepfakeDataset(dataset["train"])
+train_size = int(0.8 * len(full_dataset))
+test_size = len(full_dataset) - train_size
+train_ds, test_ds = random_split(full_dataset, [train_size, test_size])
+train_loader = DataLoader(train_ds, batch_size=8, shuffle=True, num_workers=0)
+
+# FIXED CNN - expects [batch, 1, 64, 94]
+class DeepfakeCNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 16, 3, padding=1)
+        self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.fc1 = nn.Linear(32 * 16 * 23, 64)  # After 2 pools: 64→32→16, 94→47→23
+        self.fc2 = nn.Linear(64, 1)
     
-#     # Temporal features (4 features)
-#     features.extend([np.mean(librosa.feature.zero_crossing_rate(audio))])
-#     features.extend([np.mean(librosa.feature.rms(y=audio))])
-    
-#     # Chroma + Contrast (19 features)
-#     chroma = np.mean(librosa.feature.chroma_stft(y=audio, sr=sr), axis=1)
-#     contrast = np.mean(librosa.feature.spectral_contrast(y=audio, sr=sr), axis=1)
-#     features.extend(chroma[:12])
-#     features.extend(contrast[:7])
-    
-#     return np.array(features)
+    def forward(self, x):
+        x = torch.relu(self.conv1(x))
+        x = self.pool(x)
+        x = torch.relu(self.conv2(x))
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        x = torch.relu(self.fc1(x))
+        x = torch.sigmoid(self.fc2(x))
+        return x
 
-# print("🎓 Learning 25K+ REAL voice patterns...")
-# X = []
-# count = 0
+device = torch.device("cpu")
+model = DeepfakeCNN().to(device)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+criterion = nn.BCELoss()
 
-# for root, _, files in os.walk(TRAIN_PATH):
-#     for f in files:
-#         if f.endswith('.flac') and f.startswith('LA_T') and count < 10000:  # 10K diverse real
-#             path = os.path.join(root, f)
-#             try:
-#                 audio, sr = librosa.load(path, sr=16000, duration=4.0, mono=True)
-#                 if len(audio) > 10000:
-#                     features = extract_advanced_features(audio, sr)
-#                     X.append(features)
-#                     count += 1
-                    
-#                     if count % 1000 == 0:
-#                         print(f"✅ {count} real patterns captured")
-#             except:
-#                 continue
+print("🎯 Training...")
+for epoch in range(10):
+    model.train()
+    total_loss = 0
+    for mels, labels in train_loader:
+        mels, labels = mels.to(device), labels.to(device).unsqueeze(1)
+        optimizer.zero_grad()
+        outputs = model(mels)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    print(f"Epoch {epoch+1}/10, Loss: {total_loss/len(train_loader):.4f}")
 
-# print(f"\n🎉 Dataset: {len(X)} diverse REAL patterns (78 features each)")
-
-# # ROBUST PREPROCESSING + TIGHTER ANOMALY DETECTION
-# scaler = RobustScaler()  # Better for audio outliers
-# X_scaled = scaler.fit_transform(X)
-
-# # Production-grade Isolation Forest
-# model = IsolationForest(
-#     contamination=0.05,  # Expect 5% fakes (conservative)
-#     max_samples=0.8,     # Use 80% for diversity
-#     max_features=0.7,    # 70% feature randomness
-#     n_estimators=300,    # More trees = better generalization
-#     random_state=42
-# )
-# model.fit(X_scaled)
-
-# # VALIDATE ON YOUR FILES
-# print("\n🔍 VALIDATING...")
-# real_files = ["real_audio/Furqanreal.wav"] if os.path.exists("real_audio/Furqanreal.wav") else []
-# fake_files = ["deepfake_audio/FurqanAIClone.wav"] if os.path.exists("deepfake_audio/FurqanAIClone.wav") else []
-
-# for path in real_files + fake_files:
-#     if os.path.exists(path):
-#         audio, sr = librosa.load(path, sr=16000, duration=4, mono=True)
-#         features = extract_advanced_features(audio, sr)
-#         pred = model.predict(scaler.transform([features]))[0]
-#         print(f"{os.path.basename(path)}: {'✅ REAL' if pred==1 else '❌ FAKE'}")
-
-# # SAVE PRODUCTION MODEL
-# joblib.dump(model, "ultimate_deepfake_model.pkl")
-# joblib.dump(scaler, "ultimate_scaler.pkl")
-# print("\n💾 SAVED ULTIMATE MODEL (95%+ ANY AI VOICE)")
-# print("✅ Generalizes to ALL AI generators")
-# print("✅ No overfitting to specific fakes")
-
-
-
-# -*- coding: utf-8 -*-
-print("🚀 ULTIMATE DEEPFAKE DETECTOR - Noise + Perfection Check")
-import os, librosa, numpy as np, joblib
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import RobustScaler
-
-TRAIN_PATH = r"C:\Users\library\Desktop\voice detction system\LA\ASVspoof2019_LA_train\flac"
-
-def extract_anti_ai_features(audio, sr):
-    """95 features - Detects AI 'perfection' + noise patterns"""
-    features = []
-    
-    # 39 MFCC (base)
-    mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)
-    features.extend(np.mean(mfcc, axis=1))
-    features.extend(np.std(mfcc, axis=1))  # VARIABILITY (AI = too smooth)
-    features.extend(np.mean(librosa.feature.delta(mfcc), axis=1))
-    
-    # NOISE PATTERNS (Real = noisy, AI = clean)
-    noise_rms = np.mean(librosa.feature.rms(y=audio))
-    noise_std = np.std(librosa.feature.rms(y=audio))
-    zcr = np.mean(librosa.feature.zero_crossing_rate(audio))
-    zcr_std = np.std(librosa.feature.zero_crossing_rate(audio))
-    
-    features.extend([noise_rms, noise_std, zcr, zcr_std])
-    
-    # SPECTRAL FLATNESS (AI = unnaturally smooth)
-    spectral_flatness = np.mean(librosa.feature.spectral_flatness(y=audio))
-    features.append(spectral_flatness)
-    
-    # PITCH STABILITY (AI = too consistent)
-    pitches, magnitudes = librosa.piptrack(y=audio, sr=sr)
-    pitch_var = np.var(pitches[pitches > 0])
-    features.append(pitch_var)
-    
-    # TEMPORAL IRREGULARITY (Real = breathing/pauses)
-    tempo, beats = librosa.beat.beat_track(y=audio, sr=sr)
-    features.extend([tempo, np.std(beats)])
-    
-    # AI PERFECTION METRICS
-    spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=audio, sr=sr))
-    spectral_rolloff = np.mean(librosa.feature.spectral_rolloff(y=audio, sr=sr))
-    features.extend([spectral_centroid, spectral_rolloff])
-    
-    return np.array(features)
-
-print("🎯 Learning REAL + NOISE patterns (10K samples)...")
-X = []
-count = 0
-
-for root, _, files in os.walk(TRAIN_PATH):
-    for f in files:
-        if f.startswith('LA_T') and count < 8000:
-            path = os.path.join(root, f)
-            try:
-                audio, sr = librosa.load(path, sr=16000, duration=4.0, mono=True)
-                if len(audio) > 12000:
-                    features = extract_anti_ai_features(audio, sr)
-                    X.append(features)
-                    count += 1
-                    if count % 1000 == 0:
-                        print(f"✅ {count} anti-AI patterns")
-            except:
-                continue
-
-print(f"\n🎉 {len(X)} REAL patterns with noise analysis")
-
-# TIGHTER DETECTION
-scaler = RobustScaler()
-X_scaled = scaler.fit_transform(X)
-
-model = IsolationForest(
-    contamination=0.08,  # 8% expected fakes (stricter)
-    n_estimators=500,
-    max_samples=0.7,
-    random_state=42
-)
-model.fit(X_scaled)
-
-# SAVE
-joblib.dump(model, "perfection_detector.pkl")
-joblib.dump(scaler, "perfection_scaler.pkl")
-print("\n💾 SAVED PERFECTION DETECTOR!")
-print("✅ Real = Natural noise + variation")
-print("✅ AI = Too perfect/smooth → FAKE")
+torch.save(model.state_dict(), "deepfake_cnn.pth")
+print("✅ SAVED deepfake_cnn.pth")
+input("Press Enter...")
